@@ -3,7 +3,10 @@
     "allow": [
       "Bash(rm:*)",
       "Bash(pnpm install:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(pkill:*)",
+      "Bash(kill:*)",
+      "Bash(cat:*)"
     ]
   }
 }

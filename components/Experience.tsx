@@ -61,37 +61,33 @@ const Experience: React.FC<ExperienceProps> = ({
   photos, 
 }) => {
   const [zoomedId, setZoomedId] = useState<string | null>(null);
-  const [envUrl, setEnvUrl] = useState<string | null>(null);
+  const [contextLost, setContextLost] = useState(false);
 
-  // Check for local HDR file, fallback to remote
+  // 直接使用本地 HDR 文件
+  const envUrl = './st_fagans_interior_1k.hdr';
+
+  // Listen for WebGL context loss to avoid EffectComposer crashing on null context
   useEffect(() => {
-    const checkHdr = async () => {
-        const localPath = './st_fagans_interior_1k.hdr';
-        const remotePath = 'https://dl.polyhaven.com/file/ph-assets/HDRIs/hdr/1k/st_fagans_interior_1k.hdr';
-        
-        try {
-            // Use HEAD request to check for file existence
-            // Note: Some dev servers may return 200 OK with HTML content for missing files (SPA fallback).
-            const response = await fetch(localPath, { method: 'HEAD' });
-            
-            // Safely check content type if available
-            const contentType = response.headers.get('content-type');
-            const isHtmlFallback = contentType && contentType.includes('text/html');
-            
-            // If response is OK and explicitly NOT html, assume file exists.
-            if (response.ok && !isHtmlFallback) {
-                setEnvUrl(localPath);
-            } else {
-                console.log("Local HDR not found or is HTML fallback, using remote.");
-                setEnvUrl(remotePath);
-            }
-        } catch (error) {
-            // If HEAD is not allowed or network error, fallback to remote
-            console.warn("Error checking local HDR, defaulting to remote.", error);
-            setEnvUrl(remotePath);
-        }
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+
+    const handleLost = (e: Event) => {
+      e.preventDefault(); // request automatic restore if possible
+      setContextLost(true);
+      console.warn('WebGL context lost – disabling postprocessing until restored.');
     };
-    checkHdr();
+    const handleRestored = () => {
+      setContextLost(false);
+      console.info('WebGL context restored – re‑enabling postprocessing.');
+    };
+
+    canvas.addEventListener('webglcontextlost', handleLost);
+    canvas.addEventListener('webglcontextrestored', handleRestored);
+
+    return () => {
+      canvas.removeEventListener('webglcontextlost', handleLost);
+      canvas.removeEventListener('webglcontextrestored', handleRestored);
+    };
   }, []);
 
   return (
@@ -113,18 +109,11 @@ const Experience: React.FC<ExperienceProps> = ({
       {/* Lighting & Environment */}
       <ambientLight intensity={0.2} color="#001100" />
       
-      {/* Load Environment only after we've determined the source */}
-      {envUrl && (
-          <Environment 
-            files={envUrl} 
-            backgroundBlurriness={0.8} 
-          />
-      )}
-      
-      {/* Fallback while checking (optional, avoids flash of darkness if check is slow, though usually instant locally) */}
-      {!envUrl && (
-          <Environment preset="lobby" backgroundBlurriness={0.8} />
-      )}
+      {/* Load Environment from local HDR file */}
+      <Environment
+        files={envUrl}
+        backgroundBlurriness={0.8}
+      />
       
       <spotLight 
         position={[10, 20, 10]} 
@@ -160,16 +149,19 @@ const Experience: React.FC<ExperienceProps> = ({
         </RotatingTreeGroup>
       </Suspense>
       
-      <EffectComposer enableNormalPass={false}>
-        <Bloom 
-            luminanceThreshold={0.8} 
-            mipmapBlur 
-            intensity={1.2} 
-            radius={0.4}
-        />
-        <Vignette eskil={false} offset={0.1} darkness={1.1} />
-        <Noise opacity={0.02} />
-      </EffectComposer>
+      {/* Guard postprocessing so we don't call EffectComposer when context is lost */}
+      {!contextLost && (
+        <EffectComposer enableNormalPass={false}>
+          <Bloom 
+              luminanceThreshold={0.8} 
+              mipmapBlur 
+              intensity={1.2} 
+              radius={0.4}
+          />
+          <Vignette eskil={false} offset={0.1} darkness={1.1} />
+          <Noise opacity={0.02} />
+        </EffectComposer>
+      )}
     </Canvas>
   );
 };

@@ -13,13 +13,18 @@ const Ornaments: React.FC<OrnamentsProps> = ({ treeState, globalScale, count }) 
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   
-  // State for the twinkling effect
-  const twinkleRef = useRef({
-      index: -1,
-      startTime: 0,
-      duration: 0.5, // seconds for a full flash
-      originalColor: new THREE.Color(),
-      nextTwinkleTime: 0
+  // State for the twinkling effect - 支持多个同时闪烁
+  const twinkleRef = useRef<{
+    active: Array<{
+      index: number;
+      startTime: number;
+      duration: number;
+      originalColor: THREE.Color;
+    }>;
+    nextTwinkleTime: number;
+  }>({
+    active: [],
+    nextTwinkleTime: 0
   });
 
   // Generate Data
@@ -32,7 +37,9 @@ const Ornaments: React.FC<OrnamentsProps> = ({ treeState, globalScale, count }) 
 
     for (let i = 0; i < count; i++) {
       // Target (Tree)
-      const yT = Math.random() * height * 0.9 + 0.5; // Keep off very bottom/top
+      // 使用幂函数使分布偏向底部 - 指数越大底部越密集
+      const yT = Math.pow(Math.random(), 1.8) * height * 0.9 + 0.5;
+      
       const normalizedY = yT / height;
       const radiusAtY = (1 - normalizedY) * maxRadius;
       
@@ -118,54 +125,67 @@ const Ornaments: React.FC<OrnamentsProps> = ({ treeState, globalScale, count }) 
     
     meshRef.current.instanceMatrix.needsUpdate = true;
 
-    // --- Twinkle/Flash Logic ---
+    // --- Twinkle/Flash Logic - 多个同时闪烁 ---
     const twinkle = twinkleRef.current;
-    
-    // 1. Pick a new ornament to twinkle if none active and time is right
-    if (twinkle.index === -1 && time > twinkle.nextTwinkleTime) {
-        twinkle.index = Math.floor(Math.random() * count);
-        twinkle.startTime = time;
-        // Get original color
-        if (meshRef.current.instanceColor) {
-             // Three.js InstancedMesh stores colors in a buffer attribute
-             // We can use getColorAt to retrieve it into a temp color
-             meshRef.current.getColorAt(twinkle.index, twinkle.originalColor);
-        } else {
-             // Fallback if no instance color exists yet (shouldn't happen)
-             twinkle.originalColor.set(ornaments[twinkle.index].color);
+    const maxActiveTwinkles = 5; // 最多同时闪烁数量
+
+    // 1. 触发新的闪烁
+    if (twinkle.active.length < maxActiveTwinkles && time > twinkle.nextTwinkleTime) {
+        // 随机选择一个未在闪烁的装饰球
+        let newIndex: number;
+        let attempts = 0;
+        do {
+            newIndex = Math.floor(Math.random() * count);
+            attempts++;
+        } while (twinkle.active.some(t => t.index === newIndex) && attempts < 10);
+
+        if (attempts < 10 && meshRef.current.instanceColor) {
+            const originalColor = new THREE.Color();
+            meshRef.current.getColorAt(newIndex, originalColor);
+
+            twinkle.active.push({
+                index: newIndex,
+                startTime: time,
+                duration: 0.3 + Math.random() * 0.4, // 0.3-0.7秒随机持续时间
+                originalColor: originalColor.clone()
+            });
         }
-        
-        // Randomize next interval (0.2s to 1.5s gap)
-        twinkle.nextTwinkleTime = time + twinkle.duration + Math.random() * 1.0 + 0.2;
+
+        // 下次触发间隔 (0.05s - 0.2s，更频繁)
+        twinkle.nextTwinkleTime = time + 0.05 + Math.random() * 0.15;
     }
 
-    // 2. Animate the active twinkle
-    if (twinkle.index !== -1) {
-        const elapsed = time - twinkle.startTime;
-        const progress = elapsed / twinkle.duration; // 0 to 1
+    // 2. 更新所有活跃的闪烁
+    const completedIndices: number[] = [];
+
+    twinkle.active.forEach((t, i) => {
+        const elapsed = time - t.startTime;
+        const progress = elapsed / t.duration;
 
         if (progress >= 1) {
-            // Finished: Restore original color exactly and reset
-            meshRef.current.setColorAt(twinkle.index, twinkle.originalColor);
-            twinkle.index = -1;
+            // 闪烁结束，恢复原色
+            meshRef.current!.setColorAt(t.index, t.originalColor);
+            completedIndices.push(i);
         } else {
-            // Animating: Sine wave for intensity (0 -> 1 -> 0)
-            // 0 at start, 1 at mid (0.5), 0 at end
+            // 使用正弦波产生闪烁效果 (0 -> 1 -> 0)
             const intensity = Math.sin(progress * Math.PI);
-            
-            // Mix original color with bright white
-            // We use a temp color object to avoid allocating memory every frame
-            const flashColor = new THREE.Color().copy(twinkle.originalColor);
-            // Lerp towards white
-            flashColor.lerp(new THREE.Color(1.5, 1.5, 1.5), intensity * 0.8); // 1.5 for HDR glow
-            
-            meshRef.current.setColorAt(twinkle.index, flashColor);
+
+            const flashColor = new THREE.Color().copy(t.originalColor);
+            // 混合到高亮白色，产生 HDR 辉光效果
+            flashColor.lerp(new THREE.Color(2.0, 2.0, 1.8), intensity * 0.9);
+
+            meshRef.current!.setColorAt(t.index, flashColor);
         }
-        
-        // Mark colors as needing update
-        if (meshRef.current.instanceColor) {
-            meshRef.current.instanceColor.needsUpdate = true;
-        }
+    });
+
+    // 移除已完成的闪烁（从后往前删除避免索引问题）
+    for (let i = completedIndices.length - 1; i >= 0; i--) {
+        twinkle.active.splice(completedIndices[i], 1);
+    }
+
+    // 标记颜色需要更新
+    if (meshRef.current.instanceColor && twinkle.active.length > 0) {
+        meshRef.current.instanceColor.needsUpdate = true;
     }
   });
 

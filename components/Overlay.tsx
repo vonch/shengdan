@@ -315,11 +315,30 @@ const Overlay: React.FC<OverlayProps> = ({
     }
   };
 
-  const copyToClipboard = () => {
-    if (shareUrl) {
-        navigator.clipboard.writeText(shareUrl).then(() => {
+  const copyToClipboard = async () => {
+    if (!shareUrl) return;
+
+    try {
+        // 优先使用 Clipboard API
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(shareUrl);
             alert("链接已复制到剪贴板！");
-        });
+        } else {
+            // 降级方案：使用传统方法
+            const textArea = document.createElement('textarea');
+            textArea.value = shareUrl;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-9999px';
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            alert("链接已复制到剪贴板！");
+        }
+    } catch (err) {
+        console.error('复制失败:', err);
+        // 最后的降级：提示用户手动复制
+        prompt("请手动复制链接：", shareUrl);
     }
   };
 
